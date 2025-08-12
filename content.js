@@ -5,6 +5,74 @@ let cycleTimeoutId = null;
 let countdownIntervalId = null;
 let nextRunTime = null;
 
+// 反检测配置
+const ANTI_DETECTION = {
+  // 随机延迟范围（毫秒）
+  minDelay: 800,
+  maxDelay: 2500,
+  // 运行时间间隔随机化（分钟）
+  minInterval: 18,
+  maxInterval: 22,
+  // 操作失败重试次数
+  maxRetries: 3,
+  // 鼠标移动模拟
+  enableMouseMovement: true
+};
+
+// 生成随机延迟
+function getRandomDelay() {
+  return Math.floor(Math.random() * (ANTI_DETECTION.maxDelay - ANTI_DETECTION.minDelay + 1)) + ANTI_DETECTION.minDelay;
+}
+
+// 生成随机运行间隔（毫秒）
+function getRandomInterval() {
+  const minutes = Math.random() * (ANTI_DETECTION.maxInterval - ANTI_DETECTION.minInterval) + ANTI_DETECTION.minInterval;
+  return Math.floor(minutes * 60 * 1000);
+}
+
+// 模拟人类鼠标移动
+function simulateMouseMovement(targetElement) {
+  if (!ANTI_DETECTION.enableMouseMovement || !targetElement) return;
+  
+  try {
+    const rect = targetElement.getBoundingClientRect();
+    const centerX = rect.left + rect.width / 2;
+    const centerY = rect.top + rect.height / 2;
+    
+    // 创建鼠标移动事件
+    const mouseMoveEvent = new MouseEvent('mousemove', {
+      bubbles: true,
+      cancelable: true,
+      view: window,
+      clientX: centerX + (Math.random() - 0.5) * 10, // 添加随机偏移
+      clientY: centerY + (Math.random() - 0.5) * 10
+    });
+    
+    // 创建鼠标进入事件
+    const mouseEnterEvent = new MouseEvent('mouseenter', {
+      bubbles: true,
+      cancelable: true,
+      view: window,
+      clientX: centerX,
+      clientY: centerY
+    });
+    
+    targetElement.dispatchEvent(mouseEnterEvent);
+    setTimeout(() => {
+      targetElement.dispatchEvent(mouseMoveEvent);
+    }, 50 + Math.random() * 100);
+    
+  } catch (e) {
+    console.log('鼠标移动模拟失败:', e);
+  }
+}
+
+// 增强的延迟执行函数
+function humanLikeDelay(callback, additionalDelay = 0) {
+  const delay = getRandomDelay() + additionalDelay;
+  setTimeout(callback, delay);
+}
+
 // 监听来自popup的消息
 chrome.runtime.onMessage.addListener(function(request, sender, sendResponse) {
   if (request.action === "start") {
@@ -67,8 +135,10 @@ function updateStatus(currentAction, lastAction, progress, complete = false, err
     error: error
   });
   
-  // 在控制台输出日志
-  console.log(currentAction);
+  // 在控制台输出日志（生产环境可以注释掉）
+  if (typeof DEBUG !== 'undefined' && DEBUG) {
+    console.log(currentAction);
+  }
 }
 
 // 开始自动签收（循环模式）
@@ -96,30 +166,22 @@ function executeSignOffProcess() {
 
 // 停止自动签收
 function stopAutoSign() {
+  console.log('停止自动签收被调用');
+  
   isRunning = false;
   
-  // 清除所有定时器
-  if (intervalId) {
-    clearInterval(intervalId);
-    intervalId = null;
-  }
-  
-  if (cycleTimeoutId) {
-    clearTimeout(cycleTimeoutId);
-    cycleTimeoutId = null;
-  }
-  
-  if (countdownIntervalId) {
-    clearInterval(countdownIntervalId);
-    countdownIntervalId = null;
-  }
+  // 使用统一的清理函数
+  cleanupTimers();
   
   nextRunTime = null;
   
   // 保存停止状态到storage
   chrome.storage.local.set({
     isRunning: false,
-    nextRunTime: null
+    nextRunTime: null,
+    currentAction: '已停止',
+    lastAction: '用户手动停止',
+    progress: '0/6'
   });
   
   updateStatus('已停止', '用户手动停止', '0/6');
@@ -135,8 +197,8 @@ function clickPendingTab() {
     updateStatus('找到"待签收件"标签，正在点击...', '查找标签成功', '1/6');
     elements[0].click();
     
-    // 等待页面加载（2秒后点击全选复选框）
-    setTimeout(clickSelectAllCheckbox, 2000);
+    // 等待页面加载，使用随机延迟
+    humanLikeDelay(clickSelectAllCheckbox, 1500);
   } else {
     updateStatus('未找到"待签收件"标签，重试中...', '查找标签失败', '0/6', false, true);
     // 如果没找到，1秒后重试
@@ -177,13 +239,16 @@ function clickSelectAllCheckbox() {
   if (selectAllCheckbox) {
     updateStatus('找到全选复选框，正在点击...', '查找全选复选框成功', '2/6');
     
+    // 模拟鼠标移动到复选框
+    simulateMouseMovement(selectAllCheckbox);
+    
     // 如果复选框未被选中，则点击它
     if (!selectAllCheckbox.checked) {
       selectAllCheckbox.click();
     }
     
-    // 等待复选框状态更新（1秒后点击批量签收按钮）
-    setTimeout(clickBatchSignButton, 1000);
+    // 等待复选框状态更新，使用随机延迟
+    humanLikeDelay(clickBatchSignButton, 500);
   } else {
     updateStatus('未找到全选复选框，尝试直接点击批量签收...', '查找全选复选框失败', '1/6', false, true);
     // 如果没找到全选框，直接尝试点击批量签收按钮
@@ -201,10 +266,17 @@ function clickBatchSignButton() {
   
   if (batchSignButtons.length > 0) {
     updateStatus('找到"批量签收"按钮，正在点击...', '查找批量签收按钮成功', '3/6');
-    batchSignButtons[0].click();
     
-    // 等待确认对话框出现（1.5秒后点击确认按钮）
-    setTimeout(clickFirstConfirmButton, 1500);
+    // 模拟鼠标移动到按钮
+    simulateMouseMovement(batchSignButtons[0]);
+    
+    // 添加随机延迟后点击
+    setTimeout(() => {
+      batchSignButtons[0].click();
+    }, 200 + Math.random() * 300);
+    
+    // 等待确认对话框出现，使用随机延迟
+    humanLikeDelay(clickFirstConfirmButton, 1000);
   } else {
     updateStatus('未找到"批量签收"按钮，重试中...', '查找批量签收按钮失败', '2/6', false, true);
     // 如果没找到，1秒后重试
@@ -216,11 +288,11 @@ function clickBatchSignButton() {
 function clickFirstConfirmButton() {
   if (!isRunning) return;
   
-  updateStatus('正在查找第一个"确定"按钮...', '等待确认对话框', '3/6');
+  updateStatus('正在查找"确定"按钮...', '等待确认对话框', '4/6');
   
   // 方法1：尝试直接调用函数（针对测试页面）
   if (typeof window.batchSign === 'function') {
-    updateStatus('找到批量签收函数，直接调用...', '使用函数调用替代按钮点击', '4/6');
+    updateStatus('找到批量签收函数，直接调用...', '使用函数调用替代按钮点击', '5/6');
     try {
       window.batchSign();
       
@@ -240,186 +312,27 @@ function clickFirstConfirmButton() {
   const confirmButton = findConfirmButton();
   
   if (confirmButton) {
-    updateStatus('找到第一个"确定"按钮，正在点击...', '查找确定按钮成功', '4/6');
+    updateStatus('找到"确定"按钮，正在点击...', '查找确定按钮成功', '5/6');
     
     // 使用增强的点击方法
     if (clickButtonWithMultipleMethods(confirmButton)) {
-      // 等待可能出现的第二个确认对话框（1.5秒后）
-      setTimeout(clickSecondConfirmButton, 1500);
+      // 点击确定按钮后，等待1.5秒然后完成操作
+      setTimeout(function() {
+        updateStatus('签收操作已完成！', '签收成功', '6/6', true);
+        scheduleNextRun();
+      }, 1500);
     } else {
-      updateStatus('点击确定按钮失败，重试中...', '点击操作失败', '3/6', false, true);
+      updateStatus('点击确定按钮失败，重试中...', '点击操作失败', '4/6', false, true);
       setTimeout(clickFirstConfirmButton, 1000);
     }
   } else {
-    updateStatus('未找到第一个"确定"按钮，重试中...', '查找确定按钮失败', '3/6', false, true);
+    updateStatus('未找到"确定"按钮，重试中...', '查找确定按钮失败', '4/6', false, true);
     // 如果没找到，1秒后重试
     setTimeout(clickFirstConfirmButton, 1000);
   }
 }
 
-// 点击第二个确定按钮（如果有）
-function clickSecondConfirmButton() {
-  if (!isRunning) return;
-  
-  updateStatus('正在查找第二个"确定"按钮...', '等待第二个确认对话框', '4/6');
-  
-  // 使用与第一个确定按钮相同的查找逻辑
-  let confirmButton = null;
-  
-  // 查找任何包含"确定"文本的按钮
-  const buttons = document.querySelectorAll('button');
-  for (const button of buttons) {
-    if (button.textContent.trim() === '确定') {
-      confirmButton = button;
-      break;
-    }
-  }
-  
-  // 如果没找到确定按钮，查找确认按钮
-  if (!confirmButton) {
-    for (const button of buttons) {
-      if (button.textContent.trim() === '确认') {
-        confirmButton = button;
-        break;
-      }
-    }
-  }
-  
-  // 查找对话框中的按钮
-  if (!confirmButton) {
-    // 查找可见的模态框
-    const modalElements = document.querySelectorAll('.modal, .dialog, .popup, [role="dialog"]');
-    for (const modal of modalElements) {
-      if (window.getComputedStyle(modal).display !== 'none') {
-        const modalButtons = modal.querySelectorAll('button');
-        for (const button of modalButtons) {
-          if (button.textContent.trim() === '确定' || button.textContent.trim() === '确认') {
-            confirmButton = button;
-            break;
-          }
-        }
-        
-        // 如果还是没找到，使用最后一个按钮
-        if (!confirmButton && modalButtons.length > 0) {
-          confirmButton = modalButtons[modalButtons.length - 1];
-        }
-      }
-    }
-  }
-  
-  if (confirmButton) {
-    updateStatus('找到第二个"确定"按钮，正在点击...', '查找第二个确定按钮成功', '5/6');
-    
-    try {
-      // 直接点击
-      confirmButton.click();
-      
-      // 创建并分发点击事件
-      const clickEvent = new MouseEvent('click', {
-        bubbles: true,
-        cancelable: true,
-        view: window
-      });
-      confirmButton.dispatchEvent(clickEvent);
-      
-      // 等待可能出现的第三个确认对话框（1.5秒后）
-      setTimeout(clickThirdConfirmButton, 1500);
-    } catch (e) {
-      console.error('点击第二个确定按钮失败:', e);
-      updateStatus('点击第二个确定按钮失败，尝试继续...', '点击操作失败', '4/6', false, true);
-      setTimeout(clickThirdConfirmButton, 1000);
-    }
-  } else {
-    // 如果没找到第二个确定按钮，可能不需要第二次确认，继续尝试第三个按钮
-    updateStatus('未找到第二个"确定"按钮，尝试查找第三个按钮...', '可能不需要第二次确认', '4/6');
-    setTimeout(clickThirdConfirmButton, 1000);
-  }
-}
 
-// 点击第三个确定按钮（如果有）
-function clickThirdConfirmButton() {
-  if (!isRunning) return;
-  
-  updateStatus('正在查找第三个"确定"按钮...', '等待第三个确认对话框', '5/6');
-  
-  // 使用与前两个确定按钮相同的查找逻辑
-  let confirmButton = null;
-  
-  // 查找任何包含"确定"文本的按钮
-  const buttons = document.querySelectorAll('button');
-  for (const button of buttons) {
-    if (button.textContent.trim() === '确定') {
-      confirmButton = button;
-      break;
-    }
-  }
-  
-  // 如果没找到确定按钮，查找确认按钮
-  if (!confirmButton) {
-    for (const button of buttons) {
-      if (button.textContent.trim() === '确认') {
-        confirmButton = button;
-        break;
-      }
-    }
-  }
-  
-  // 查找对话框中的按钮
-  if (!confirmButton) {
-    // 查找可见的模态框
-    const modalElements = document.querySelectorAll('.modal, .dialog, .popup, [role="dialog"]');
-    for (const modal of modalElements) {
-      if (window.getComputedStyle(modal).display !== 'none') {
-        const modalButtons = modal.querySelectorAll('button');
-        for (const button of modalButtons) {
-          if (button.textContent.trim() === '确定' || button.textContent.trim() === '确认') {
-            confirmButton = button;
-            break;
-          }
-        }
-        
-        // 如果还是没找到，使用最后一个按钮
-        if (!confirmButton && modalButtons.length > 0) {
-          confirmButton = modalButtons[modalButtons.length - 1];
-        }
-      }
-    }
-  }
-  
-  if (confirmButton) {
-    updateStatus('找到第三个"确定"按钮，正在点击...', '查找第三个确定按钮成功', '6/6');
-    
-    try {
-      // 直接点击
-      confirmButton.click();
-      
-      // 创建并分发点击事件
-      const clickEvent = new MouseEvent('click', {
-        bubbles: true,
-        cancelable: true,
-        view: window
-      });
-      confirmButton.dispatchEvent(clickEvent);
-      
-      // 完成所有操作
-      setTimeout(function() {
-        updateStatus('签收操作已完成！', '签收成功', '6/6', true);
-        scheduleNextRun();
-      }, 1500);
-    } catch (e) {
-      console.error('点击第三个确定按钮失败:', e);
-      updateStatus('点击第三个确定按钮失败，但继续完成操作', '点击操作失败', '5/6', false, true);
-      setTimeout(function() {
-        updateStatus('签收操作已完成！', '签收可能已成功', '6/6', true);
-        scheduleNextRun();
-      }, 1000);
-    }
-  } else {
-    // 如果没找到第三个确定按钮，可能不需要第三次确认，完成操作
-    updateStatus('未找到第三个"确定"按钮，可能不需要第三次确认', '签收操作已完成', '6/6', true);
-    scheduleNextRun();
-  }
-}
 
 // 通过类名和文本内容查找按钮
 function findButtonByClassAndText(className, text) {
@@ -482,60 +395,76 @@ function findConfirmButton() {
   return null;
 }
 
-// 增强的按钮点击方法
+// 增强的按钮点击方法（带反检测）
 function clickButtonWithMultipleMethods(button) {
   try {
     console.log('尝试点击按钮:', button);
     
+    // 模拟鼠标移动到按钮
+    simulateMouseMovement(button);
+    
     // 确保按钮可见和可点击
     button.scrollIntoView({ behavior: 'smooth', block: 'center' });
     
-    // 方法1：获取焦点后点击
-    if (button.focus) {
-      button.focus();
-    }
+    // 随机延迟
+    const delay = 100 + Math.random() * 200;
+    
     setTimeout(() => {
-      // 方法2：直接点击
-      button.click();
+      // 方法1：获取焦点后点击
+      if (button.focus) {
+        button.focus();
+      }
       
-      // 方法3：创建并分发点击事件
-      const clickEvent = new MouseEvent('click', {
-        bubbles: true,
-        cancelable: true,
-        view: window,
-        detail: 1
-      });
-      button.dispatchEvent(clickEvent);
-      
-      // 方法4：创建并分发mousedown和mouseup事件
-      const mouseDownEvent = new MouseEvent('mousedown', {
-        bubbles: true,
-        cancelable: true,
-        view: window
-      });
-      const mouseUpEvent = new MouseEvent('mouseup', {
-        bubbles: true,
-        cancelable: true,
-        view: window
-      });
-      button.dispatchEvent(mouseDownEvent);
-      button.dispatchEvent(mouseUpEvent);
-      
-      // 方法5：使用指针事件
-      const pointerDownEvent = new PointerEvent('pointerdown', {
-        bubbles: true,
-        cancelable: true,
-        view: window
-      });
-      const pointerUpEvent = new PointerEvent('pointerup', {
-        bubbles: true,
-        cancelable: true,
-        view: window
-      });
-      button.dispatchEvent(pointerDownEvent);
-      button.dispatchEvent(pointerUpEvent);
-      
-    }, 100);
+      // 添加随机的小延迟
+      setTimeout(() => {
+        // 创建更真实的点击事件
+        const rect = button.getBoundingClientRect();
+        const centerX = rect.left + rect.width / 2 + (Math.random() - 0.5) * 5;
+        const centerY = rect.top + rect.height / 2 + (Math.random() - 0.5) * 5;
+        
+        // 方法2：创建并分发完整的鼠标事件序列
+        const mouseDownEvent = new MouseEvent('mousedown', {
+          bubbles: true,
+          cancelable: true,
+          view: window,
+          clientX: centerX,
+          clientY: centerY,
+          button: 0
+        });
+        
+        const mouseUpEvent = new MouseEvent('mouseup', {
+          bubbles: true,
+          cancelable: true,
+          view: window,
+          clientX: centerX,
+          clientY: centerY,
+          button: 0
+        });
+        
+        const clickEvent = new MouseEvent('click', {
+          bubbles: true,
+          cancelable: true,
+          view: window,
+          clientX: centerX,
+          clientY: centerY,
+          detail: 1,
+          button: 0
+        });
+        
+        // 按真实顺序触发事件
+        button.dispatchEvent(mouseDownEvent);
+        
+        setTimeout(() => {
+          button.dispatchEvent(mouseUpEvent);
+          setTimeout(() => {
+            button.dispatchEvent(clickEvent);
+            // 最后尝试直接点击作为备用
+            button.click();
+          }, 10 + Math.random() * 20);
+        }, 50 + Math.random() * 100);
+        
+      }, 50 + Math.random() * 100);
+    }, delay);
     
     return true;
   } catch (e) {
@@ -548,36 +477,41 @@ function clickButtonWithMultipleMethods(button) {
 function scheduleNextRun() {
   if (!isRunning) return; // 如果已经停止，不安排下一次运行
   
-  // 设置下次运行时间（20分钟后）
-  nextRunTime = new Date(Date.now() + 20 * 60 * 1000);
+  // 使用随机间隔（18-22分钟）
+  const randomInterval = getRandomInterval();
+  nextRunTime = new Date(Date.now() + randomInterval);
   
   // 保存下次运行时间到storage
   chrome.storage.local.set({
     nextRunTime: nextRunTime.getTime()
   });
   
-  updateStatus('等待下次运行...', '签收完成，等待中', '6/6', true);
+  const minutes = Math.floor(randomInterval / (1000 * 60));
+  updateStatus(`等待下次运行...（约${minutes}分钟后）`, '签收完成，等待中', '6/6', true);
   
   // 开始倒计时显示
   startCountdown();
   
-  // 设置20分钟后的定时器
+  // 设置随机时间后的定时器
   cycleTimeoutId = setTimeout(function() {
     if (isRunning) { // 确保仍在运行状态
       executeSignOffProcess();
     }
-  }, 20 * 60 * 1000); // 20分钟 = 20 * 60 * 1000毫秒
+  }, randomInterval);
 }
 
 // 开始倒计时显示
 function startCountdown() {
   if (countdownIntervalId) {
     clearInterval(countdownIntervalId);
+    countdownIntervalId = null;
   }
   
   countdownIntervalId = setInterval(function() {
-    if (!isRunning || !nextRunTime) {
+    // 增强的停止检查
+    if (!isRunning || !nextRunTime || countdownIntervalId === null) {
       clearInterval(countdownIntervalId);
+      countdownIntervalId = null;
       return;
     }
     
@@ -586,6 +520,7 @@ function startCountdown() {
     
     if (timeLeft <= 0) {
       clearInterval(countdownIntervalId);
+      countdownIntervalId = null;
       return;
     }
     
