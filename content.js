@@ -1,6 +1,9 @@
 // 初始化变量
 let isRunning = false;
 let intervalId = null;
+let cycleTimeoutId = null;
+let countdownIntervalId = null;
+let nextRunTime = null;
 
 // 监听来自popup的消息
 chrome.runtime.onMessage.addListener(function(request, sender, sendResponse) {
@@ -12,9 +15,36 @@ chrome.runtime.onMessage.addListener(function(request, sender, sendResponse) {
 });
 
 // 检查插件启动时的状态
-chrome.storage.local.get(['isRunning'], function(result) {
+chrome.storage.local.get(['isRunning', 'nextRunTime'], function(result) {
   if (result.isRunning) {
-    startAutoSign();
+    isRunning = true;
+    
+    if (result.nextRunTime) {
+      nextRunTime = new Date(result.nextRunTime);
+      const now = new Date();
+      
+      // 如果下次运行时间已经过了，立即执行
+      if (nextRunTime <= now) {
+        executeSignOffProcess();
+      } else {
+        // 否则继续等待并显示倒计时
+        const timeLeft = nextRunTime - now;
+        updateStatus('等待下次运行...', '恢复运行状态', '6/6', true);
+        
+        // 设置剩余时间的定时器
+        cycleTimeoutId = setTimeout(function() {
+          if (isRunning) {
+            executeSignOffProcess();
+          }
+        }, timeLeft);
+        
+        // 开始倒计时显示
+        startCountdown();
+      }
+    } else {
+      // 如果没有下次运行时间，立即开始执行
+      executeSignOffProcess();
+    }
   }
 });
 
@@ -41,11 +71,24 @@ function updateStatus(currentAction, lastAction, progress, complete = false, err
   console.log(currentAction);
 }
 
-// 开始自动签收
+// 开始自动签收（循环模式）
 function startAutoSign() {
+  if (isRunning) return; // 防止重复启动
+  
   isRunning = true;
   
+  // 保存运行状态到storage
+  chrome.storage.local.set({isRunning: true});
+  
   updateStatus('正在查找"待签收件"标签...', '开始运行', '0/6');
+  
+  // 开始执行签收流程
+  executeSignOffProcess();
+}
+
+// 执行一次完整的签收流程
+function executeSignOffProcess() {
+  updateStatus('正在查找"待签收件"标签...', '开始执行签收流程', '0/6');
   
   // 先点击"待签收件"标签
   clickPendingTab();
@@ -54,10 +97,30 @@ function startAutoSign() {
 // 停止自动签收
 function stopAutoSign() {
   isRunning = false;
+  
+  // 清除所有定时器
   if (intervalId) {
     clearInterval(intervalId);
     intervalId = null;
   }
+  
+  if (cycleTimeoutId) {
+    clearTimeout(cycleTimeoutId);
+    cycleTimeoutId = null;
+  }
+  
+  if (countdownIntervalId) {
+    clearInterval(countdownIntervalId);
+    countdownIntervalId = null;
+  }
+  
+  nextRunTime = null;
+  
+  // 保存停止状态到storage
+  chrome.storage.local.set({
+    isRunning: false,
+    nextRunTime: null
+  });
   
   updateStatus('已停止', '用户手动停止', '0/6');
 }
@@ -155,66 +218,8 @@ function clickFirstConfirmButton() {
   
   updateStatus('正在查找第一个"确定"按钮...', '等待确认对话框', '3/6');
   
-  // 使用多种方法查找确定按钮
-  let confirmButton = null;
-  
-  // 方法1：直接查找确定按钮（测试页面中的按钮）
-  confirmButton = findButtonByClassAndText('confirm-btn', '确定');
-  
-  // 方法2：查找任何包含"确定"文本的按钮
-  if (!confirmButton) {
-    const buttons = document.querySelectorAll('button');
-    for (const button of buttons) {
-      if (button.textContent.trim() === '确定') {
-        confirmButton = button;
-        break;
-      }
-    }
-  }
-  
-  // 方法3：查找对话框中的按钮
-  if (!confirmButton) {
-    // 查找可见的模态框
-    const modalElements = document.querySelectorAll('.modal, .dialog, .popup, [role="dialog"]');
-    for (const modal of modalElements) {
-      if (window.getComputedStyle(modal).display !== 'none') {
-        // 在可见的模态框中查找确定按钮
-        const buttons = modal.querySelectorAll('button');
-        for (const button of buttons) {
-          if (button.textContent.trim() === '确定') {
-            confirmButton = button;
-            break;
-          }
-        }
-        
-        // 如果没找到确定按钮，尝试找确认按钮
-        if (!confirmButton) {
-          for (const button of buttons) {
-            if (button.textContent.trim() === '确认') {
-              confirmButton = button;
-              break;
-            }
-          }
-        }
-        
-        // 如果还是没找到，尝试找类名包含confirm的按钮
-        if (!confirmButton) {
-          const confirmBtns = modal.querySelectorAll('.confirm-btn, .ok-btn, [class*="confirm"], [class*="ok"]');
-          if (confirmBtns.length > 0) {
-            confirmButton = confirmBtns[0];
-          }
-        }
-        
-        // 如果还是没找到，使用最后一个按钮（通常是确定按钮）
-        if (!confirmButton && buttons.length > 0) {
-          confirmButton = buttons[buttons.length - 1];
-        }
-      }
-    }
-  }
-  
-  // 方法4：尝试直接调用函数（针对测试页面）
-  if (!confirmButton && typeof window.batchSign === 'function') {
+  // 方法1：尝试直接调用函数（针对测试页面）
+  if (typeof window.batchSign === 'function') {
     updateStatus('找到批量签收函数，直接调用...', '使用函数调用替代按钮点击', '4/6');
     try {
       window.batchSign();
@@ -222,7 +227,7 @@ function clickFirstConfirmButton() {
       // 直接调用函数后，跳过后续确定按钮点击，直接完成
       setTimeout(function() {
         updateStatus('签收操作已完成！', '签收成功', '6/6', true);
-        isRunning = false;
+        scheduleNextRun();
       }, 1500);
       
       return;
@@ -231,26 +236,17 @@ function clickFirstConfirmButton() {
     }
   }
   
+  // 方法2：使用更强大的按钮查找和点击策略
+  const confirmButton = findConfirmButton();
+  
   if (confirmButton) {
     updateStatus('找到第一个"确定"按钮，正在点击...', '查找确定按钮成功', '4/6');
     
-    // 使用多种方法尝试点击按钮
-    try {
-      // 方法1：直接点击
-      confirmButton.click();
-      
-      // 方法2：如果直接点击不起作用，尝试创建并分发点击事件
-      const clickEvent = new MouseEvent('click', {
-        bubbles: true,
-        cancelable: true,
-        view: window
-      });
-      confirmButton.dispatchEvent(clickEvent);
-      
+    // 使用增强的点击方法
+    if (clickButtonWithMultipleMethods(confirmButton)) {
       // 等待可能出现的第二个确认对话框（1.5秒后）
       setTimeout(clickSecondConfirmButton, 1500);
-    } catch (e) {
-      console.error('点击确定按钮失败:', e);
+    } else {
       updateStatus('点击确定按钮失败，重试中...', '点击操作失败', '3/6', false, true);
       setTimeout(clickFirstConfirmButton, 1000);
     }
@@ -408,20 +404,20 @@ function clickThirdConfirmButton() {
       // 完成所有操作
       setTimeout(function() {
         updateStatus('签收操作已完成！', '签收成功', '6/6', true);
-        isRunning = false;
+        scheduleNextRun();
       }, 1500);
     } catch (e) {
       console.error('点击第三个确定按钮失败:', e);
       updateStatus('点击第三个确定按钮失败，但继续完成操作', '点击操作失败', '5/6', false, true);
       setTimeout(function() {
         updateStatus('签收操作已完成！', '签收可能已成功', '6/6', true);
-        isRunning = false;
+        scheduleNextRun();
       }, 1000);
     }
   } else {
     // 如果没找到第三个确定按钮，可能不需要第三次确认，完成操作
     updateStatus('未找到第三个"确定"按钮，可能不需要第三次确认', '签收操作已完成', '6/6', true);
-    isRunning = false;
+    scheduleNextRun();
   }
 }
 
@@ -434,6 +430,179 @@ function findButtonByClassAndText(className, text) {
     }
   }
   return null;
+}
+
+// 增强的确定按钮查找方法
+function findConfirmButton() {
+  let confirmButton = null;
+  
+  // 方法1：查找测试页面中的特定按钮
+  confirmButton = findButtonByClassAndText('confirm-btn', '确定');
+  if (confirmButton) return confirmButton;
+  
+  // 方法2：查找可见模态框中的确定按钮
+  const modalElements = document.querySelectorAll('.modal, .dialog, .popup, [role="dialog"], .ant-modal, .el-dialog');
+  for (const modal of modalElements) {
+    const computedStyle = window.getComputedStyle(modal);
+    if (computedStyle.display !== 'none' && computedStyle.visibility !== 'hidden' && computedStyle.opacity !== '0') {
+      // 在可见的模态框中查找确定按钮
+      const buttons = modal.querySelectorAll('button, input[type="button"], input[type="submit"], .btn');
+      for (const button of buttons) {
+        const buttonText = button.textContent.trim();
+        if (buttonText === '确定' || buttonText === '确认' || buttonText === 'OK' || buttonText === '提交') {
+          return button;
+        }
+      }
+      
+      // 查找类名包含confirm的按钮
+      const confirmBtns = modal.querySelectorAll('.confirm-btn, .ok-btn, [class*="confirm"], [class*="ok"], .ant-btn-primary');
+      if (confirmBtns.length > 0) {
+        return confirmBtns[0];
+      }
+      
+      // 使用最后一个按钮（通常是确定按钮）
+      if (buttons.length > 0) {
+        return buttons[buttons.length - 1];
+      }
+    }
+  }
+  
+  // 方法3：查找页面中所有可见的确定按钮
+  const allButtons = document.querySelectorAll('button, input[type="button"], input[type="submit"], .btn');
+  for (const button of allButtons) {
+    const computedStyle = window.getComputedStyle(button);
+    if (computedStyle.display !== 'none' && computedStyle.visibility !== 'hidden') {
+      const buttonText = button.textContent.trim();
+      if (buttonText === '确定' || buttonText === '确认' || buttonText === 'OK') {
+        return button;
+      }
+    }
+  }
+  
+  return null;
+}
+
+// 增强的按钮点击方法
+function clickButtonWithMultipleMethods(button) {
+  try {
+    console.log('尝试点击按钮:', button);
+    
+    // 确保按钮可见和可点击
+    button.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    
+    // 方法1：获取焦点后点击
+    if (button.focus) {
+      button.focus();
+    }
+    setTimeout(() => {
+      // 方法2：直接点击
+      button.click();
+      
+      // 方法3：创建并分发点击事件
+      const clickEvent = new MouseEvent('click', {
+        bubbles: true,
+        cancelable: true,
+        view: window,
+        detail: 1
+      });
+      button.dispatchEvent(clickEvent);
+      
+      // 方法4：创建并分发mousedown和mouseup事件
+      const mouseDownEvent = new MouseEvent('mousedown', {
+        bubbles: true,
+        cancelable: true,
+        view: window
+      });
+      const mouseUpEvent = new MouseEvent('mouseup', {
+        bubbles: true,
+        cancelable: true,
+        view: window
+      });
+      button.dispatchEvent(mouseDownEvent);
+      button.dispatchEvent(mouseUpEvent);
+      
+      // 方法5：使用指针事件
+      const pointerDownEvent = new PointerEvent('pointerdown', {
+        bubbles: true,
+        cancelable: true,
+        view: window
+      });
+      const pointerUpEvent = new PointerEvent('pointerup', {
+        bubbles: true,
+        cancelable: true,
+        view: window
+      });
+      button.dispatchEvent(pointerDownEvent);
+      button.dispatchEvent(pointerUpEvent);
+      
+    }, 100);
+    
+    return true;
+  } catch (e) {
+    console.error('点击按钮失败:', e);
+    return false;
+  }
+}
+
+// 安排下一次运行
+function scheduleNextRun() {
+  if (!isRunning) return; // 如果已经停止，不安排下一次运行
+  
+  // 设置下次运行时间（20分钟后）
+  nextRunTime = new Date(Date.now() + 20 * 60 * 1000);
+  
+  // 保存下次运行时间到storage
+  chrome.storage.local.set({
+    nextRunTime: nextRunTime.getTime()
+  });
+  
+  updateStatus('等待下次运行...', '签收完成，等待中', '6/6', true);
+  
+  // 开始倒计时显示
+  startCountdown();
+  
+  // 设置20分钟后的定时器
+  cycleTimeoutId = setTimeout(function() {
+    if (isRunning) { // 确保仍在运行状态
+      executeSignOffProcess();
+    }
+  }, 20 * 60 * 1000); // 20分钟 = 20 * 60 * 1000毫秒
+}
+
+// 开始倒计时显示
+function startCountdown() {
+  if (countdownIntervalId) {
+    clearInterval(countdownIntervalId);
+  }
+  
+  countdownIntervalId = setInterval(function() {
+    if (!isRunning || !nextRunTime) {
+      clearInterval(countdownIntervalId);
+      return;
+    }
+    
+    const now = new Date();
+    const timeLeft = nextRunTime - now;
+    
+    if (timeLeft <= 0) {
+      clearInterval(countdownIntervalId);
+      return;
+    }
+    
+    const minutes = Math.floor(timeLeft / (1000 * 60));
+    const seconds = Math.floor((timeLeft % (1000 * 60)) / 1000);
+    
+    const countdownText = `下次运行还有 ${minutes}分${seconds}秒`;
+    updateStatus(countdownText, '等待下次运行', '6/6', true);
+  }, 1000); // 每秒更新一次
+}
+
+// 格式化剩余时间
+function formatTimeLeft(milliseconds) {
+  const totalSeconds = Math.floor(milliseconds / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}分${seconds}秒`;
 }
 
 // 通过文本内容查找元素
