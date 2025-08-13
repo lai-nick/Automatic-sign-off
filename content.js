@@ -5,6 +5,10 @@ let cycleTimeoutId = null;
 let countdownIntervalId = null;
 let nextRunTime = null;
 
+// 重试计数器
+let confirmButtonRetryCount = 0;
+const MAX_RETRY_COUNT = 3;  // 最大重试次数
+
 // 随机时间间隔配置（分钟）
 const MIN_INTERVAL = 18;
 const MAX_INTERVAL = 22;
@@ -118,8 +122,9 @@ function stopAutoSign() {
     countdownIntervalId = null;
   }
   
-  // 清零下次运行时间
+  // 清零下次运行时间和重试计数器
   nextRunTime = null;
+  confirmButtonRetryCount = 0;
   
   // 保存停止状态到storage
   chrome.storage.local.set({
@@ -132,7 +137,7 @@ function stopAutoSign() {
   
   updateStatus('已停止', '用户手动停止', '0/6');
   
-  console.log('停止自动签收被调用，所有计时器已清除，下次运行时间已清零');
+  console.log('停止自动签收被调用，所有计时器已清除，下次运行时间已清零，重试计数器已重置');
 }
 
 // 点击"待签收件"标签
@@ -237,6 +242,8 @@ function clickFirstConfirmButton() {
       // 直接调用函数后，跳过后续确定按钮点击，直接完成
       setTimeout(function() {
         updateStatus('签收操作已完成！', '签收成功', '6/6', true);
+        // 重置重试计数器
+        confirmButtonRetryCount = 0;
         scheduleNextRun();
       }, 1500);
       
@@ -251,6 +258,8 @@ function clickFirstConfirmButton() {
   
   if (confirmButton) {
     updateStatus('找到第一个"确定"按钮，正在点击...', '查找确定按钮成功', '4/6');
+    // 重置重试计数器
+    confirmButtonRetryCount = 0;
     
     // 使用增强的点击方法
     if (clickButtonWithMultipleMethods(confirmButton)) {
@@ -262,8 +271,21 @@ function clickFirstConfirmButton() {
     }
   } else {
     updateStatus('未找到第一个"确定"按钮，重试中...', '查找确定按钮失败', '3/6', false, true);
-    // 如果没找到，1秒后重试
-    setTimeout(clickFirstConfirmButton, 1000);
+    
+    // 增加重试计数
+    confirmButtonRetryCount++;
+    
+    if (confirmButtonRetryCount < MAX_RETRY_COUNT) {
+      // 未达到最大重试次数，继续尝试
+      console.log(`未找到第一个确定按钮，第${confirmButtonRetryCount}次重试...`);
+      setTimeout(clickFirstConfirmButton, 1000);
+    } else {
+      // 达到最大重试次数，直接进行下一步
+      updateStatus('未找到确定按钮达到最大次数，直接进行下一步', '跳过确认按钮', '4/6');
+      console.log('未找到第一个确定按钮，已达到最大重试次数，直接进行下一步');
+      confirmButtonRetryCount = 0; // 重置计数器
+      setTimeout(clickSecondConfirmButton, 1000);
+    }
   }
 }
 
@@ -319,6 +341,8 @@ function clickSecondConfirmButton() {
   
   if (confirmButton) {
     updateStatus('找到第二个"确定"按钮，正在点击...', '查找第二个确定按钮成功', '5/6');
+    // 重置重试计数器
+    confirmButtonRetryCount = 0;
     
     try {
       // 直接点击
@@ -340,9 +364,21 @@ function clickSecondConfirmButton() {
       setTimeout(clickThirdConfirmButton, 1000);
     }
   } else {
-    // 如果没找到第二个确定按钮，可能不需要第二次确认，继续尝试第三个按钮
-    updateStatus('未找到第二个"确定"按钮，尝试查找第三个按钮...', '可能不需要第二次确认', '4/6');
-    setTimeout(clickThirdConfirmButton, 1000);
+    // 增加重试计数
+    confirmButtonRetryCount++;
+    
+    if (confirmButtonRetryCount < MAX_RETRY_COUNT) {
+      // 未达到最大重试次数，继续尝试
+      console.log(`未找到第二个确定按钮，第${confirmButtonRetryCount}次重试...`);
+      updateStatus('未找到第二个"确定"按钮，重试中...', '查找第二个确定按钮失败', '4/6', false, true);
+      setTimeout(clickSecondConfirmButton, 1000);
+    } else {
+      // 达到最大重试次数，直接进行下一步
+      updateStatus('未找到第二个确定按钮达到最大次数，直接进行下一步', '跳过第二个确认按钮', '5/6');
+      console.log('未找到第二个确定按钮，已达到最大重试次数，直接进行下一步');
+      confirmButtonRetryCount = 0; // 重置计数器
+      setTimeout(clickThirdConfirmButton, 1000);
+    }
   }
 }
 
@@ -398,6 +434,8 @@ function clickThirdConfirmButton() {
   
   if (confirmButton) {
     updateStatus('找到第三个"确定"按钮，正在点击...', '查找第三个确定按钮成功', '6/6');
+    // 重置重试计数器
+    confirmButtonRetryCount = 0;
     
     try {
       // 直接点击
@@ -425,9 +463,21 @@ function clickThirdConfirmButton() {
       }, 1000);
     }
   } else {
-    // 如果没找到第三个确定按钮，可能不需要第三次确认，完成操作
-    updateStatus('未找到第三个"确定"按钮，可能不需要第三次确认', '签收操作已完成', '6/6', true);
-    scheduleNextRun();
+    // 增加重试计数
+    confirmButtonRetryCount++;
+    
+    if (confirmButtonRetryCount < MAX_RETRY_COUNT) {
+      // 未达到最大重试次数，继续尝试
+      console.log(`未找到第三个确定按钮，第${confirmButtonRetryCount}次重试...`);
+      updateStatus('未找到第三个"确定"按钮，重试中...', '查找第三个确定按钮失败', '5/6', false, true);
+      setTimeout(clickThirdConfirmButton, 1000);
+    } else {
+      // 达到最大重试次数，直接完成操作
+      updateStatus('未找到第三个确定按钮达到最大次数，直接完成操作', '跳过第三个确认按钮', '6/6', true);
+      console.log('未找到第三个确定按钮，已达到最大重试次数，直接完成操作');
+      confirmButtonRetryCount = 0; // 重置计数器
+      scheduleNextRun();
+    }
   }
 }
 
