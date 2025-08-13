@@ -4,6 +4,8 @@ let intervalId = null;
 let cycleTimeoutId = null;
 let countdownIntervalId = null;
 let nextRunTime = null;
+let confirmButtonRetryCount = 0;  // 确定按钮重试计数器
+const MAX_RETRY_COUNT = 3;  // 最大重试次数
 
 // 反检测配置
 const ANTI_DETECTION = {
@@ -164,6 +166,27 @@ function executeSignOffProcess() {
   clickPendingTab();
 }
 
+// 清理所有定时器和状态
+function cleanupTimers() {
+  if (intervalId) {
+    clearInterval(intervalId);
+    intervalId = null;
+  }
+  
+  if (cycleTimeoutId) {
+    clearTimeout(cycleTimeoutId);
+    cycleTimeoutId = null;
+  }
+  
+  if (countdownIntervalId) {
+    clearInterval(countdownIntervalId);
+    countdownIntervalId = null;
+  }
+  
+  // 重置重试计数器
+  confirmButtonRetryCount = 0;
+}
+
 // 停止自动签收
 function stopAutoSign() {
   console.log('停止自动签收被调用');
@@ -299,6 +322,8 @@ function clickFirstConfirmButton() {
       // 直接调用函数后，跳过后续确定按钮点击，直接完成
       setTimeout(function() {
         updateStatus('签收操作已完成！', '签收成功', '6/6', true);
+        // 重置重试计数器
+        confirmButtonRetryCount = 0;
         scheduleNextRun();
       }, 1500);
       
@@ -319,16 +344,39 @@ function clickFirstConfirmButton() {
       // 点击确定按钮后，等待1.5秒然后完成操作
       setTimeout(function() {
         updateStatus('签收操作已完成！', '签收成功', '6/6', true);
+        // 重置重试计数器
+        confirmButtonRetryCount = 0;
         scheduleNextRun();
       }, 1500);
     } else {
       updateStatus('点击确定按钮失败，重试中...', '点击操作失败', '4/6', false, true);
-      setTimeout(clickFirstConfirmButton, 1000);
+      // 增加重试计数
+      confirmButtonRetryCount++;
+      
+      if (confirmButtonRetryCount < MAX_RETRY_COUNT) {
+        // 未达到最大重试次数，继续尝试
+        setTimeout(clickFirstConfirmButton, 1000);
+      } else {
+        // 达到最大重试次数，放弃当前流程，安排下一次运行
+        updateStatus('点击确定按钮失败达到最大次数，放弃当前流程', '签收未完成', '6/6', true, true);
+        confirmButtonRetryCount = 0; // 重置计数器
+        scheduleNextRun();
+      }
     }
   } else {
     updateStatus('未找到"确定"按钮，重试中...', '查找确定按钮失败', '4/6', false, true);
-    // 如果没找到，1秒后重试
-    setTimeout(clickFirstConfirmButton, 1000);
+    // 增加重试计数
+    confirmButtonRetryCount++;
+    
+    if (confirmButtonRetryCount < MAX_RETRY_COUNT) {
+      // 未达到最大重试次数，继续尝试
+      setTimeout(clickFirstConfirmButton, 1000);
+    } else {
+      // 达到最大重试次数，放弃当前流程，安排下一次运行
+      updateStatus('未找到确定按钮达到最大次数，放弃当前流程', '签收未完成', '6/6', true, true);
+      confirmButtonRetryCount = 0; // 重置计数器
+      scheduleNextRun();
+    }
   }
 }
 
